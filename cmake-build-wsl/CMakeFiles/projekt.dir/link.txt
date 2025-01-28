@@ -1,0 +1,1 @@
+/usr/bin/cc -g CMakeFiles/projekt.dir/queue.c.o CMakeFiles/projekt.dir/test.c.o -o projekt

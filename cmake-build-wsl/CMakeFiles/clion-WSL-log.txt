@@ -1,0 +1,4 @@
+/usr/bin/cmake -DCMAKE_BUILD_TYPE=Debug -G "Unix Makefiles" -S /mnt/d/Studia/II/I/psw/projekt -B /mnt/d/Studia/II/I/psw/projekt/cmake-build-wsl
+-- Configuring done (0.0s)
+-- Generating done (0.2s)
+-- Build files have been written to: /mnt/d/Studia/II/I/psw/projekt/cmake-build-wsl

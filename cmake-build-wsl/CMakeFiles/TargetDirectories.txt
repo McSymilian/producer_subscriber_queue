@@ -1,0 +1,3 @@
+/mnt/d/Studia/II/I/psw/projekt/cmake-build-wsl/CMakeFiles/psw_queue.dir
+/mnt/d/Studia/II/I/psw/projekt/cmake-build-wsl/CMakeFiles/edit_cache.dir
+/mnt/d/Studia/II/I/psw/projekt/cmake-build-wsl/CMakeFiles/rebuild_cache.dir
