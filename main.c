@@ -2,60 +2,60 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <semaphore.h>
-#include <signal.h>
 #include <stdbool.h>
 #include "queue.h"
 
-void *initTest(void * args) {
+void *initTest(void *args) {
     TQueue *queue = createQueue(10);
+
+    bool success = queue != NULL
+                && queue->maxSize == 10;
     destroyQueue(queue);
-    bool *success = malloc(sizeof(bool));
-    *success = true;
-    return success;
+
+    printf("initTest: %s\n", success ? "success" : "failed");
+
+    return NULL;
 }
 
-void *threadBusyWait(void * args) {
+void *threadBusyWait(void *args) {
     while (true) {}
 }
 
 void *singleSubscriberMultipleMessagesSequentialReceivedTest(void *args) {
-    bool *success = malloc(sizeof(bool));
-    *success = true;
-
     TQueue *queue = createQueue(10);
 
     pthread_t* thread = malloc(sizeof(pthread_t));
     pthread_create(thread, NULL, threadBusyWait, NULL);
+
     subscribe(queue, *thread);
+
     int *msg = malloc(sizeof(int));
     *msg = 10;
     addMsg(queue, msg);
+
     const int available = getAvailable(queue, *thread);
     const int* msg2 = getMsg(queue, *thread);
     const int available2 = getAvailable(queue, *thread);
-    if (available != 1 || available2 != 0 || *msg2 != 10 || *msg != *msg2) {
-        destroyQueue(queue);
-        free(msg);
 
-        *success = false;
-        return success;
+    bool success = available == 1
+                && available2 == 0
+                && *msg == *msg2;
+
+    if (!success) {
+        destroyQueue(queue);
+        pthread_cancel(*thread);
+        free(thread);
+        free(msg);
+        goto RESULT;
     }
 
     int *msg3 = malloc(sizeof(int));
     *msg3 = 20;
     addMsg(queue, msg3);
-    const int available3 = getAvailable(queue, *thread);
-    int* msg4 = getMsg(queue, *thread);
-    const int available4 = getAvailable(queue, *thread);
-    if (available3 != 1 || available4 != 0 || *msg4 != 20 || *msg3 != *msg4) {
-        destroyQueue(queue);
-        free(msg);
-        free(msg3);
-        *success = false;
-        return success;
-    }
 
+    success = getAvailable(queue, *thread) == 1
+            && *msg3 == *(int*)getMsg(queue, *thread)
+            && getAvailable(queue, *thread) == 0;
 
     destroyQueue(queue);
     free(msg);
@@ -63,13 +63,12 @@ void *singleSubscriberMultipleMessagesSequentialReceivedTest(void *args) {
     pthread_cancel(*thread);
     free(thread);
 
-    return success;
+RESULT:
+    printf("singleSubscriberMultipleMessagesSequentialReceivedTest: %s\n", success ? "success" : "failed");
+    return NULL;
 }
 
 void *singleSubscriberMultipleMessagesSingleReceivedTest(void *args) {
-    bool *success = malloc(sizeof(bool));
-    *success = true;
-
     TQueue *queue = createQueue(10);
 
     pthread_t* thread = malloc(sizeof(pthread_t));
@@ -92,21 +91,12 @@ void *singleSubscriberMultipleMessagesSingleReceivedTest(void *args) {
     const int* msg4 = getMsg(queue, *thread);
     const int available4 = getAvailable(queue, *thread);
 
-    if (
-        available != 1 ||
-        available2 != 2 ||
-        available3 != 1 ||
-        available4 != 0 ||
-        *msg3 != 10 ||
-        *msg4 != 20
-        ) {
-        destroyQueue(queue);
-        free(msg);
-        free(msg2);
-
-        *success = false;
-        return success;
-    }
+    bool success = available == 1
+                && available2 == 2
+                && available3 == 1
+                && available4 == 0
+                && *msg3 == 10
+                && *msg4 == 20;
 
     destroyQueue(queue);
     free(msg);
@@ -114,13 +104,11 @@ void *singleSubscriberMultipleMessagesSingleReceivedTest(void *args) {
     pthread_cancel(*thread);
     free(thread);
 
-    return success;
+    printf("singleSubscriberMultipleMessagesSingleReceivedTest: %s\n", success ? "success" : "failed");
+    return NULL;
 }
 
 void *multipleSubscribersSingleMessageTest(void *args) {
-    bool *success = malloc(sizeof(bool));
-    *success = true;
-
     int size = 10;
     TQueue *queue =createQueue(size);
 
@@ -132,69 +120,56 @@ void *multipleSubscribersSingleMessageTest(void *args) {
     *msg = 10;
     addMsg(queue, msg);
 
-    const int available = getAvailable(queue, *thread);
-    if (available != 1) {
+    bool success = getAvailable(queue, *thread) == 1;
+    if (!success) {
         destroyQueue(queue);
         free(msg);
+        pthread_cancel(*thread);
         free(thread);
 
-        *success = false;
-        return success;
+       goto RESULT;
     }
 
     pthread_t* thread2 = malloc(sizeof(pthread_t));
     pthread_create(thread2, NULL, threadBusyWait, NULL);
     subscribe(queue, *thread2);
-    const int available2 = getAvailable(queue, *thread2);
-    if (available2 != 0) {
+
+    success = getAvailable(queue, *thread2) == 0;
+    if (!success) {
         destroyQueue(queue);
         free(msg);
+
+        pthread_cancel(*thread2);
         free(thread2);
+
+        pthread_cancel(*thread);
         free(thread);
 
-        *success = false;
-        return success;
+        goto RESULT;
     }
+
     getMsg(queue, *thread);
-    const int available3 = getAvailable(queue, *thread);
-    if (available3 != 0) {
+
+    success = getAvailable(queue, *thread) == 0;
+    if (!success) {
         destroyQueue(queue);
         free(msg);
+        pthread_cancel(*thread2);
         free(thread2);
+        pthread_cancel(*thread);
         free(thread);
 
-        *success = false;
-        return success;
+        goto RESULT;
     }
 
     char* msg2 = malloc(sizeof(char) * 10);
     strcpy(msg2, "hello");
     addMsg(queue, msg2);
-    const int available4 = getAvailable(queue, *thread);
-    const int available5 = getAvailable(queue, *thread2);
-    if (available4 != 1 || available5 != 1) {
-        destroyQueue(queue);
-        free(msg);
-        free(thread2);
-        free(thread);
-        free(msg2);
 
-        *success = false;
-        return success;
-    }
-
-    const char* msg3 = getMsg(queue, *thread);
-    const char* msg4 = getMsg(queue, *thread2);
-    if (strcmp(msg3, "hello") != 0 || strcmp(msg4, "hello") != 0) {
-        destroyQueue(queue);
-        free(msg);
-        free(thread2);
-        free(thread);
-        free(msg2);
-
-        *success = false;
-        return success;
-    }
+    success = getAvailable(queue, *thread) == 1
+            && getAvailable(queue, *thread2) == 1
+            && !strcmp(getMsg(queue, *thread), "hello")
+            && !strcmp(getMsg(queue, *thread2), "hello");
 
     destroyQueue(queue);
     free(msg);
@@ -206,13 +181,13 @@ void *multipleSubscribersSingleMessageTest(void *args) {
     pthread_cancel(*thread);
     free(thread);
 
-    return success;
+RESULT:
+    printf("multipleSubscribersSingleMessageTest: %s\n", success ? "success" : "failed");
+
+    return NULL;
 }
 
 void *multipleSubscribersMultipleMessagesTest(void *args) {
-    bool *success = malloc(sizeof(bool));
-    *success = true;
-
     TQueue *queue = createQueue(10);
 
     pthread_t* thread = malloc(sizeof(pthread_t));
@@ -223,70 +198,60 @@ void *multipleSubscribersMultipleMessagesTest(void *args) {
     *msg = 10;
     addMsg(queue, msg);
 
-    const int available = getAvailable(queue, *thread);
-    if (available != 1) {
+    bool success = getAvailable(queue, *thread) == 1;
+    if (!success) {
         destroyQueue(queue);
         free(msg);
+        pthread_cancel(*thread);
         free(thread);
 
-        *success = false;
-        return success;
+        goto RESULT;
     }
 
     pthread_t* thread2 = malloc(sizeof(pthread_t));
     pthread_create(thread2, NULL, threadBusyWait, NULL);
     subscribe(queue, *thread2);
-    const int available2 = getAvailable(queue, *thread2);
-    if (available2 != 0) {
+
+    success = getAvailable(queue, *thread2) == 0
+            && getAvailable(queue, *thread) == 1;
+
+    if (!success) {
         destroyQueue(queue);
         free(msg);
+
+        pthread_cancel(*thread2);
         free(thread2);
+
+        pthread_cancel(*thread);
         free(thread);
 
-        *success = false;
-        return success;
-    }
-
-    const int available3 = getAvailable(queue, *thread);
-    if (available3 != 1) {
-        destroyQueue(queue);
-        free(msg);
-        free(thread2);
-        free(thread);
-
-        *success = false;
-        return success;
+        goto RESULT;
     }
 
     char* msg2 = malloc(sizeof(char) * 10);
     strcpy(msg2, "hello");
     addMsg(queue, msg2);
-    const int available4 = getAvailable(queue, *thread);
-    const int available5 = getAvailable(queue, *thread2);
-    if (available4 != 2 || available5 != 1) {
+
+    success = getAvailable(queue, *thread) == 2
+            && getAvailable(queue, *thread2) == 1;
+
+    if (!success) {
         destroyQueue(queue);
         free(msg);
+
+        pthread_cancel(*thread2);
         free(thread2);
+
+        pthread_cancel(*thread);
         free(thread);
         free(msg2);
 
-        *success = false;
-        return success;
+        goto RESULT;
     }
 
-    const int* msg3 = getMsg(queue, *thread);
-    const char* msg4 = getMsg(queue, *thread);
-    const char* msg5 = getMsg(queue, *thread2);
-    if (*msg3 != 10 || strcmp(msg4, "hello") != 0 || strcmp(msg5, "hello") != 0) {
-        destroyQueue(queue);
-        free(msg);
-        free(thread2);
-        free(thread);
-        free(msg2);
-
-        *success = false;
-        return success;
-    }
+    success = *(int*)getMsg(queue, *thread) == 10
+            && !strcmp(getMsg(queue, *thread), "hello")
+            && !strcmp(getMsg(queue, *thread2), "hello");
 
     destroyQueue(queue);
     free(msg);
@@ -298,15 +263,15 @@ void *multipleSubscribersMultipleMessagesTest(void *args) {
     pthread_cancel(*thread);
     free(thread);
 
-    return success;
+ RESULT:
+    printf("multipleSubscribersMultipleMessagesTest: %s\n", success ? "success" : "failed");
+    return NULL;
 }
 
 void *changeSizeTest(void *args) {
-    bool *success = malloc(sizeof(bool));
-    *success = true;
-
     TQueue *queue = createQueue(10);
     pthread_t** threads = malloc(sizeof(pthread_t*) * 10);
+
     for (int i = 0; i < 10; i++) {
         threads[i] = malloc(sizeof(pthread_t));
         pthread_create(threads[i], NULL, threadBusyWait, NULL);
@@ -317,19 +282,13 @@ void *changeSizeTest(void *args) {
         addMsg(queue, msg);
     }
 
+    bool success = true;
     setSize(queue, 5);
     for (int i = 0; i < 10; i++) {
         const int available = getAvailable(queue, *threads[i]);
-        if (i < 5 && available != 5 || i >= 5 && available != 10 - i) {
-            destroyQueue(queue);
-            for (int j = 0; j < 10; j++) {
-                free(threads[j]);
-            }
-            free(threads);
-
-            *success = false;
-            return success;
-        }
+        success = (i < 5 && available == 5)
+                || (i >= 5 && available == 10 - i);
+        if (!success) break;
     }
 
     destroyQueue(queue);
@@ -339,7 +298,8 @@ void *changeSizeTest(void *args) {
     }
     free(threads);
 
-    return success;
+    printf("changeSizeTest: %s\n", success ? "success" : "failed");
+    return NULL;
 }
 
 void *sender(void *args) {
@@ -371,8 +331,6 @@ void *subscriber(void *args) {
 }
 
 void *parallelSenderSubscriberTest(void *args) {
-    bool *success = malloc(sizeof(bool));
-    *success = true;
 
     TQueue *queue = createQueue(10);
 
@@ -385,13 +343,14 @@ void *parallelSenderSubscriberTest(void *args) {
     char *result;
     pthread_join(*subscriberThread, (void**)&result);
 
-    *success = strcmp(result, "0123456789") == 0;
+    bool success = !strcmp(result, "0123456789");
 
     destroyQueue(queue);
     free(senderThread);
     free(subscriberThread);
 
-    return success;
+    printf("parallelSenderSubscriberTest: %s\n", success ? "success" : "failed");
+    return NULL;
 }
 
 typedef struct {
@@ -412,7 +371,6 @@ void *subscriberDelayed(void *args) {
         usleep(threadArgs->time);
         char* msg = getMsg(threadArgs->queue, pthread_self());
         strcat(result, msg);
-
     }
 
     strcat(result, "\0");
@@ -421,9 +379,6 @@ void *subscriberDelayed(void *args) {
 }
 
 void *parallelSenderSubscribersTest(void *args) {
-    bool *success = malloc(sizeof(bool));
-    *success = true;
-
     TQueue *queue = createQueue(10);
 
     pthread_t* subscriberThread0 = malloc(sizeof(pthread_t));
@@ -447,7 +402,8 @@ void *parallelSenderSubscribersTest(void *args) {
     char *result1;
     pthread_join(*subscriberThread1, (void**)&result1);
 
-    *success =  strcmp(result0, "0123456789") == 0 && strcmp(result1, "0123456789") == 0;
+    bool success = !strcmp(result0, "0123456789")
+                && !strcmp(result1, "0123456789");
 
     destroyQueue(queue);
     free(senderThread);
@@ -456,7 +412,8 @@ void *parallelSenderSubscribersTest(void *args) {
     free(args0);
     free(args1);
 
-    return success;
+    printf("parallelSenderSubscribersTest: %s\n", success ? "success" : "failed");
+    return NULL;
 }
 
 typedef struct {
@@ -484,6 +441,7 @@ typedef struct {
     pthread_mutex_t* mutex;
     TQueue *queue;
 } SubscriberArgs;
+
 void *subscriberBigMemory(void *args) {
     SubscriberArgs *subscriberArgs = args;
     subscribe(subscriberArgs->queue, pthread_self());
@@ -505,37 +463,34 @@ void *garbageCollector(void *args) {
     for (unsigned long int i = 0; i < threshold; i++)
         free(getMsg(subscriberArgs->queue, pthread_self()));
 
-
     unsubscribe(subscriberArgs->queue, pthread_self());
+
     return NULL;
 }
 
 void *memoryLeakTest(void *args) {
-    bool *success = malloc(sizeof(bool));
-    *success = true;
-
     pthread_mutex_t mutex[5];
     for (int i = 0; i < 5; i++) {
         pthread_mutex_init(&mutex[i], NULL);
         pthread_mutex_lock(&mutex[i]);
     }
 
-    TQueue *queue = createQueue(5);
+    TQueue *queue = createQueue(100000);
 
     SubscriberArgs *subscriberArgs = malloc(sizeof(SubscriberArgs));
     subscriberArgs->queue = queue;
     subscriberArgs->mutex = &mutex[0];
 
     pthread_t* subscriberThread = malloc(sizeof(pthread_t));
-    if (pthread_create(subscriberThread, NULL, subscriberBigMemory, subscriberArgs))  {
+    bool success = !pthread_create(subscriberThread, NULL, subscriberBigMemory, subscriberArgs);
+    if (!success) {
         pthread_cancel(*subscriberThread);
 
         free(subscriberThread);
 
         destroyQueue(queue);
 
-        *success = false;
-        return success;
+        goto RESULT;
     }
 
     SubscriberArgs *subscriber0Args = malloc(sizeof(SubscriberArgs));
@@ -543,7 +498,8 @@ void *memoryLeakTest(void *args) {
     subscriber0Args->mutex = &mutex[1];
 
     pthread_t* subscriberThread0 = malloc(sizeof(pthread_t));
-    if (pthread_create(subscriberThread0, NULL, subscriberBigMemory, subscriber0Args)) {
+    success = !pthread_create(subscriberThread0, NULL, subscriberBigMemory, subscriber0Args);
+    if (!success) {
         pthread_cancel(*subscriberThread);
 
         free(subscriberThread);
@@ -551,8 +507,7 @@ void *memoryLeakTest(void *args) {
 
         destroyQueue(queue);
 
-        *success = false;
-        return success;
+        goto RESULT;
     }
 
     SubscriberArgs *subscriber1Args = malloc(sizeof(SubscriberArgs));
@@ -560,7 +515,8 @@ void *memoryLeakTest(void *args) {
     subscriber1Args->mutex = &mutex[2];
 
     pthread_t* subscriberThread1 = malloc(sizeof(pthread_t));
-    if (pthread_create(subscriberThread1, NULL, subscriberBigMemory, subscriber1Args)) {
+    success = !pthread_create(subscriberThread1, NULL, subscriberBigMemory, subscriber1Args);
+    if (!success) {
         pthread_cancel(*subscriberThread);
         pthread_cancel(*subscriberThread0);
 
@@ -570,8 +526,7 @@ void *memoryLeakTest(void *args) {
 
         destroyQueue(queue);
 
-        *success = false;
-        return success;
+        goto RESULT;
     }
 
     SubscriberArgs *subscriber2Args = malloc(sizeof(SubscriberArgs));
@@ -579,7 +534,8 @@ void *memoryLeakTest(void *args) {
     subscriber2Args->mutex = &mutex[3];
 
     pthread_t* subscriberThread2 = malloc(sizeof(pthread_t));
-    if (pthread_create(subscriberThread2, NULL, subscriberBigMemory, subscriber2Args)) {
+    success = !pthread_create(subscriberThread2, NULL, subscriberBigMemory, subscriber2Args);
+    if (!success) {
         pthread_cancel(*subscriberThread);
         pthread_cancel(*subscriberThread0);
         pthread_cancel(*subscriberThread1);
@@ -591,8 +547,7 @@ void *memoryLeakTest(void *args) {
 
         destroyQueue(queue);
 
-        *success = false;
-        return success;
+        goto RESULT;
     }
 
     SubscriberArgs *subscriber3Args = malloc(sizeof(SubscriberArgs));
@@ -600,7 +555,8 @@ void *memoryLeakTest(void *args) {
     subscriber3Args->mutex = &mutex[4];
 
     pthread_t* garbageCollectorThread = malloc(sizeof(pthread_t));
-    if (pthread_create(garbageCollectorThread, NULL, garbageCollector, subscriber3Args)) {
+    success = !pthread_create(garbageCollectorThread, NULL, garbageCollector, subscriber3Args);
+    if (!success) {
         pthread_cancel(*subscriberThread);
         pthread_cancel(*subscriberThread0);
         pthread_cancel(*subscriberThread1);
@@ -614,15 +570,16 @@ void *memoryLeakTest(void *args) {
 
         destroyQueue(queue);
 
-        *success = false;
-        return success;
+        goto RESULT;
     }
 
     SenderArgs *senderArgs = malloc(sizeof(SenderArgs));
     senderArgs->queue = queue;
     senderArgs->mutex = mutex;
     pthread_t* senderThread = malloc(sizeof(pthread_t));
-    if (pthread_create(senderThread, NULL, senderBigMemory, senderArgs)) {
+
+    success = !pthread_create(senderThread, NULL, senderBigMemory, senderArgs);
+    if (!success) {
         pthread_cancel(*subscriberThread);
         pthread_cancel(*subscriberThread0);
         pthread_cancel(*subscriberThread1);
@@ -638,9 +595,9 @@ void *memoryLeakTest(void *args) {
 
         destroyQueue(queue);
 
-        *success = false;
-        return success;
+        goto RESULT;
     }
+
     pthread_join(*senderThread, NULL);
 
     pthread_join(*subscriberThread, NULL);
@@ -672,10 +629,12 @@ void *memoryLeakTest(void *args) {
     free(subscriberThread2);
     free(garbageCollectorThread);
 
-    return success;
+RESULT:
+    printf("memoryLeakTest: %s\n", success ? "success" : "failed");
+    return NULL;
 }
 
-void *unsubscribeTest(void*) {
+void *unsubscribeTest(void *args) {
     pthread_t* thread = malloc(sizeof(pthread_t));
     pthread_create(thread, NULL, threadBusyWait, NULL);
 
@@ -686,15 +645,22 @@ void *unsubscribeTest(void*) {
     *msg = 10;
     addMsg(queue, msg);
 
-    bool *success = malloc(sizeof(bool));
-    *success = getAvailable(queue, *thread) == 1;
+    bool success = getAvailable(queue, *thread) == 1;
+    if (!success) {
+        free(msg);
+        destroyQueue(queue);
+        pthread_cancel(*thread);
+        free(thread);
+
+        goto RESULT;
+    }
 
     int *msg2 = malloc(sizeof(int));
     *msg2 = 20;
     addMsg(queue, msg2);
 
     unsubscribe(queue, *thread);
-    *success = getAvailable(queue, *thread) == 0 && success;
+    success = getAvailable(queue, *thread) == 0;
 
     destroyQueue(queue);
 
@@ -703,13 +669,37 @@ void *unsubscribeTest(void*) {
     free(msg);
     free(msg2);
 
-    return success;
+RESULT:
+    printf("unsubscribeTest: %s\n", success ? "success" : "failed");
+    return NULL;
+}
+
+void *destroyFullQueueTest(void *args) {
+    TQueue *queue = createQueue(10);
+    pthread_t* threads = malloc(sizeof(pthread_t)*20);
+    for (int i = 0; i < 20; ++i) {
+        pthread_create(&threads[i], NULL, threadBusyWait, NULL);
+        subscribe(queue, threads[i]);
+    }
+
+    int *msg = malloc(sizeof(int) * 10);
+    for (int i = 0; i < 10; ++i) {
+        msg[i] = i;
+        addMsg(queue, &msg[i]);
+    }
+    destroyQueue(queue);
+    free(msg);
+    for (int i = 0; i < 20; ++i)
+        pthread_cancel(threads[i]);
+
+    free(threads);
+
+    printf("destroyFullQueueTest: success\n");
+
+    return NULL;
 }
 
 int main() {
-    /*
-     *  tests group: 0
-     */
     pthread_t t0;
     pthread_create(&t0, NULL, initTest, NULL);
 
@@ -731,37 +721,6 @@ int main() {
     pthread_t t6;
     pthread_create(&t6, NULL, parallelSenderSubscriberTest, NULL);
 
-    bool *result0;
-    pthread_join(t0, (void**)&result0);
-    printf("initTest: %s\n", *result0 ? "success" : "failed");
-
-    bool *result1;
-    pthread_join(t1, (void**)&result1);
-    printf("singleSubscriberMultipleMessagesSequentialReceivedTest: %s\n", *result1 ? "success" : "failed");
-
-    bool *result2;
-    pthread_join(t2, (void**)&result2);
-    printf("singleSubscriberMultipleMessagesSingleReceivedTest: %s\n", *result2 ? "success" : "failed");
-
-    bool *result3;
-    pthread_join(t3, (void**)&result3);
-    printf("multipleSubscribersSingleMessageTest: %s\n", *result3 ? "success" : "failed");
-
-    bool *result4;
-    pthread_join(t4, (void**)&result4);
-    printf("multipleSubscribersMultipleMessagesTest: %s\n", *result4 ? "success" : "failed");
-
-    bool *result5;
-    pthread_join(t5, (void**)&result5);
-    printf("changeSizeTest: %s\n", *result5 ? "success" : "failed");
-
-    bool *result6;
-    pthread_join(t6, (void**)&result6);
-    printf("parallelSenderSubscriberTest: %s\n", *result6 ? "success" : "failed");
-
-    /*
-     *  tests group: 1
-     */
     pthread_t t7;
     pthread_create(&t7, NULL, parallelSenderSubscribersTest, NULL);
 
@@ -771,17 +730,19 @@ int main() {
     pthread_t t9;
     pthread_create(&t9, NULL, unsubscribeTest, NULL);
 
-    bool *result7;
-    pthread_join(t7, (void**)&result7);
-    printf("parallelSenderSubscribersTest: %s\n", *result7 ? "success" : "failed");
+    pthread_t t10;
+    pthread_create(&t10, NULL, destroyFullQueueTest, NULL);
 
-    bool *result8;
-    pthread_join(t8, (void**)&result8);
-    printf("memoryLeakTest: %s\n", *result8 ? "success" : "failed");
-
-    bool *result9;
-    pthread_join(t9, (void**)&result9);
-    printf("unsubscribeTest: %s\n", *result9 ? "success" : "failed");
-
+    pthread_join(t0, NULL);
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+    pthread_join(t3, NULL);
+    pthread_join(t4, NULL);
+    pthread_join(t5, NULL);
+    pthread_join(t6, NULL);
+    pthread_join(t7, NULL);
+    pthread_join(t8, NULL);
+    pthread_join(t9, NULL);
+    pthread_join(t10, NULL);
     return 0;
 }

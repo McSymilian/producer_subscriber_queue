@@ -1,12 +1,10 @@
-#include <pthread.h>
 #include <stdlib.h>
-#include "queue.h"
 #include <malloc.h>
 #include <stdbool.h>
+#include "queue.h"
 
 typedef struct SubscriberNode {
     pthread_t data;
-    int nextMessageIndex;
     struct SubscriberNode *prev;
     struct SubscriberNode *next;
 } SubscriberNode;
@@ -19,26 +17,25 @@ typedef struct SubscribersList {
 
 SubscriberNode* createSubscriberNode(pthread_t subscriber) {
     SubscriberNode *newNode = malloc(sizeof(SubscriberNode));
-    if (!newNode) {
-        perror("Failed to create node");
+    if (!newNode)
         exit(EXIT_FAILURE);
-    }
+
     newNode->data = subscriber;
     newNode->prev = NULL;
     newNode->next = NULL;
-    newNode->nextMessageIndex = 0;
+
     return newNode;
 }
 
 SubscribersList* createSubscribersList() {
     SubscribersList *list = malloc(sizeof(SubscribersList));
-    if (!list) {
-        perror("Failed to create list");
+    if (!list)
         exit(EXIT_FAILURE);
-    }
+
     list->head = NULL;
     list->tail = NULL;
     list->size = 0;
+
     return list;
 }
 
@@ -52,30 +49,50 @@ void appendSubscriber(SubscribersList *list, pthread_t subscriber) {
         list->head = newNode;
         list->tail = newNode;
     }
+
     list->size++;
+}
+
+SubscriberNode* findSubscriberBidirectional(SubscribersList *list, pthread_t subscriber) {
+    if (!list || list->size == 0) return NULL;
+
+    SubscriberNode *forwardNode = list->head;
+    SubscriberNode *backwardNode = list->tail;
+
+    while (forwardNode && backwardNode && forwardNode != backwardNode && forwardNode->prev != backwardNode) {
+        if (pthread_equal(forwardNode->data, subscriber))
+            return forwardNode;
+
+        if (pthread_equal(backwardNode->data, subscriber))
+            return backwardNode;
+
+        forwardNode = forwardNode->next;
+        backwardNode = backwardNode->prev;
+    }
+
+    if (forwardNode && pthread_equal(forwardNode->data, subscriber))
+        return forwardNode;
+
+    return NULL;
 }
 
 void removeSubscriber(SubscribersList *list, pthread_t subscriber) {
     if (!subscriber) return;
-    SubscriberNode *node = list->head;
-    while (node) {
-        if (pthread_equal(node->data, subscriber)) {
-            if (node->prev) {
-                node->prev->next = node->next;
-            } else {
-                list->head = node->next;
-            }
-            if (node->next) {
-                node->next->prev = node->prev;
-            } else {
-                list->tail = node->prev;
-            }
-            free(node);
-            list->size--;
-            return;
-        }
-        node = node->next;
-    }
+    SubscriberNode *node = findSubscriberBidirectional(list, subscriber);
+    if (!node) return;
+
+    if (node->prev)
+        node->prev->next = node->next;
+    else
+        list->head = node->next;
+
+    if (node->next)
+        node->next->prev = node->prev;
+    else
+        list->tail = node->prev;
+
+    free(node);
+    list->size--;
 }
 
 void destroySubscribersList(SubscribersList *list) {
@@ -88,21 +105,25 @@ void destroySubscribersList(SubscribersList *list) {
     free(list);
 }
 
+void copySubscribersList(SubscribersList *from, SubscribersList *to) {
+    if (!from || !to) return;
+
+    SubscriberNode *current = from->head;
+    while (current) {
+        appendSubscriber(to, current->data);
+        current = current->next;
+    }
+}
 
 bool isSubscriber(SubscribersList *list, pthread_t subscriber) {
     if (!list) return false;
-    SubscriberNode *current = list->head;
-    while (current) {
-        if (pthread_equal(current->data, subscriber)) {
-            return true;
-        }
-        current = current->next;
-    }
-    return false;
+
+    return findSubscriberBidirectional(list, subscriber) != NULL;
 }
 
 typedef struct MessageNode {
     void *message;
+    SubscribersList *subscribers;
     struct MessageNode *prev;
     struct MessageNode *next;
 } MessageNode;
@@ -113,15 +134,17 @@ typedef struct MessagesList {
     int size;
 } MessagesList;
 
-MessageNode* createMessageNode(void *message) {
+MessageNode* createMessageNode(void *message, SubscribersList *subscribers) {
     MessageNode *newNode = malloc(sizeof(MessageNode));
-    if (!newNode) {
-        perror("Failed to create node");
+    if (!newNode)
         exit(EXIT_FAILURE);
-    }
+
     newNode->message = message;
+    newNode->subscribers = createSubscribersList();
+    copySubscribersList(subscribers, newNode->subscribers);
     newNode->prev = NULL;
     newNode->next = NULL;
+
     return newNode;
 }
 
@@ -134,11 +157,12 @@ MessagesList* createMessagesList() {
     list->head = NULL;
     list->tail = NULL;
     list->size = 0;
+
     return list;
 }
 
-void appendMessage(MessagesList *list, void *message) {
-    MessageNode *newNode = createMessageNode(message);
+void appendMessage(MessagesList *list, void *message, SubscribersList *subscribers) {
+    MessageNode *newNode = createMessageNode(message, subscribers);
     if (list->tail) {
         list->tail->next = newNode;
         newNode->prev = list->tail;
@@ -147,53 +171,74 @@ void appendMessage(MessagesList *list, void *message) {
         list->head = newNode;
         list->tail = newNode;
     }
+
     list->size++;
 }
 
-
-void removeMessageNode(MessagesList *list, MessageNode *node, int index, SubscribersList *subscribers) {
+void removeMessageNode(MessagesList *list, MessageNode *node) {
     if (!node) return;
-    if (node->prev) {
+
+    if (node->prev)
         node->prev->next = node->next;
-    } else {
+    else
         list->head = node->next;
-    }
-    if (node->next) {
+
+    if (node->next)
         node->next->prev = node->prev;
-    } else {
+    else
         list->tail = node->prev;
-    }
-    SubscriberNode *current = subscribers->head;
-    while (current) {
-        if (current->nextMessageIndex > index)
-            current->nextMessageIndex--;
 
-        current = current->next;
-    }
-
+    free(node->subscribers);
     free(node);
+
     list->size--;
 }
 
-void removeMessage(MessagesList *list, void *message, SubscribersList *subscribers) {
-    if (!message) return;
-    MessageNode *node = list->head;
-    int index = 0;
-    while (node) {
-        if (node->message == message)
-            return removeMessageNode(list, node, index, subscribers);
-        index++;
-        node = node->next;
+MessageNode* findMessageBidirectional(MessagesList *list, const void *message) {
+    if (!list || list->size == 0) return NULL;
+
+    MessageNode *forwardNode = list->head;
+    MessageNode *backwardNode = list->tail;
+
+    while (
+        forwardNode && backwardNode
+        && forwardNode != backwardNode
+        && forwardNode->prev != backwardNode
+    ) {
+        if (forwardNode->message == message) {
+            return forwardNode;
+        }
+        if (backwardNode->message == message) {
+            return backwardNode;
+        }
+        forwardNode = forwardNode->next;
+        backwardNode = backwardNode->prev;
     }
+
+    if (forwardNode && forwardNode->message == message)
+        return forwardNode;
+
+    return NULL;
+}
+
+void removeMessage(MessagesList *list, void *message) {
+    if (!message) return;
+
+    MessageNode *node = findMessageBidirectional(list, message);
+    if (!node) return;
+
+    removeMessageNode(list, node);
 }
 
 void destroyMessagesList(MessagesList *list) {
     MessageNode *current = list->head;
     while (current) {
         MessageNode *next = current->next;
+        destroySubscribersList(current->subscribers);
         free(current);
         current = next;
     }
+
     free(list);
 }
 
@@ -257,11 +302,9 @@ extern void addMsg(TQueue *queue, void *msg) {
     if (queue->messages->size >= queue->maxSize)
         pthread_cond_wait(&queue->msg_fully_received_cond, &queue->operational_mutex);
 
-
     appendMessage(queue->messages, msg, queue->allSubscribers);
     pthread_cond_broadcast(&queue->msg_posted_cond);
     pthread_mutex_unlock(&queue->operational_mutex);
-
 }
 
 extern void *getMsg(TQueue *queue, pthread_t thread) {
@@ -305,8 +348,6 @@ extern int getAvailable(TQueue *queue, pthread_t thread) {
     pthread_mutex_unlock(&queue->operational_mutex);
     return sum;
 }
-
-
 
 extern void removeMsg(TQueue *queue, void *msg) {
     pthread_mutex_lock(&queue->operational_mutex);
